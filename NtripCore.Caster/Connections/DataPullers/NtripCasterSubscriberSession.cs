@@ -69,7 +69,7 @@ namespace NtripCore.Caster.Connections.DataPullers
 
             try
             {
-                // proccess http requests
+                // process http requests
                 if (message.Contains("HTTP"))
                 {
                     IncomingNtripHttpRequestMessage incomingMessage = new IncomingNtripHttpRequestMessage(message);
@@ -97,6 +97,12 @@ namespace NtripCore.Caster.Connections.DataPullers
                             _ntripCaster.SubscribeClientToMountpoint(this, incomingMessage.RequestedMountpointName);
                         }
                     }
+                }
+                // if message starts with SOURCE (NTRIP v1 source authentication)
+                else if (message.StartsWith("SOURCE"))
+                {
+                    ParsedHttpHeaders parsedHeaders = ParsedHttpHeaders.Parse(message);
+                    ProcessSource(parsedHeaders);
                 }
                 // if message starts with $ (NMEA messages), don't parse headers
                 else if (message.StartsWith("$"))
@@ -137,41 +143,38 @@ namespace NtripCore.Caster.Connections.DataPullers
 
         private void ProcessSource(ParsedHttpHeaders parsedHeaders)
         {
-            //// Check Mountpoint
-            //var source = Config.Sources.FirstOrDefault(x => x.Mountpoint == parsedHeaders.Mountpoint);
+            // Check Mountpoint
+            var sources = Program._configuration.GetSection("Sources").Get<List<NtripSource>>();
+            var source = sources?.FirstOrDefault(x => x.Mountpoint == parsedHeaders.Mountpoint);
 
-            //if (source == null)
-            //{
-            //    string sourceTableResponse = GetSourcetable(parsedHeaders);
+            if (source == null)
+            {
+                Console.WriteLine($"Source mountpoint '{parsedHeaders.Mountpoint}' not found");
+                SendAsync("ERROR - Mountpoint not found");
+                Disconnect();
+                return;
+            }
 
-            //    SendAsync(sourceTableResponse);
-            //    Disconnect();
+            // Check if authentication is required
+            if (source.AuthRequired)
+            {
+                // Check Password
+                if (string.IsNullOrEmpty(source.Password) || !source.Password.Equals(parsedHeaders.Password, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"Invalid password for mountpoint '{parsedHeaders.Mountpoint}'");
+                    SendAsync("ERROR - Bad Password");
+                    Disconnect();
+                    return;
+                }
+            }
 
-            //    return;
-            //}
+            // Authentication successful
+            Console.WriteLine($"Source authenticated successfully for mountpoint '{parsedHeaders.Mountpoint}'");
+            SendAsync("ICY 200 OK\r\n");
 
-            ////// Check if there is another Server
-            ////if (Servers[parsedHeaders.Mountpoint] != null) {
-            ////    SendToSocket(socket, "ERROR - Mountpoint already in use"); // Check behavior
-            ////    socket.Close();
-            ////    return;
-            ////}
-
-            //// Check Login
-            //if (!source.Password.Equals(parsedHeaders.Password, StringComparison.OrdinalIgnoreCase))
-            //{
-            //    SendAsync("ERROR - Bad Password");
-            //    Disconnect();
-
-            //    return;
-            //}
-
-            //// Read Data
-            //socket.Send(Encoding.ASCII.GetBytes("ICY 200 OK\r\n"));
-
-            //Console.WriteLine($"New Server: {socket.RemoteEndPoint}");
-            //var server = new ServerConnection(socket, parsedHeaders.Mountpoint, this);
-            //server.StartProcessing();
+            // TODO: Handle the source data stream
+            // For now, we'll just keep the connection open
+            // In a full implementation, you would create a source session to handle the data
         }
 
         private void ProcessClient(ParsedHttpHeaders parsedHeaders)
